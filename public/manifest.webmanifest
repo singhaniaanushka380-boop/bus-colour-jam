@@ -1,0 +1,11 @@
+{
+  "name": "BUS COLOR JAM",
+  "short_name": "Bus Color Jam",
+  "description": "Park the buses, match the passengers, clear the jam.",
+  "start_url": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#4cc3ff",
+  "theme_color": "#4cc3ff",
+  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
