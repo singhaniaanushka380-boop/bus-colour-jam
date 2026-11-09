@@ -11,7 +11,7 @@ const IMG_H = 1672;
 const KX = GAME_W / IMG_W;
 const KY = GAME_H / IMG_H;
 
-// [name, centreX, centreY, width, height] in image pixels
+// [centreX, centreY, width, height] in image pixels
 const HITBOXES = {
   settings:     [80, 78, 110, 110],
   play:         [470, 1082, 625, 180],
