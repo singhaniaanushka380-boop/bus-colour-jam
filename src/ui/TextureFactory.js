@@ -442,3 +442,10 @@ export function generateAllTextures(scene) {
   makeMenuBackground(scene);
   makeGameBackground(scene);
 }
+export const TextureFactory = {
+  initialize: function(scene) {
+    // Agar BootScene initialize dhoondh rahi hai
+    generateAllTextures(scene);
+  },
+  generateAllTextures: generateAllTextures
+};
