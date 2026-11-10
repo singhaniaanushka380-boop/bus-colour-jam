@@ -6,7 +6,7 @@ import { Bus } from '../objects/Bus.js';
 /** Branded loading screen. Preloads the main-menu artwork and shows real loading progress. */
 export class LoadingScene extends Phaser.Scene {
   constructor() {
-    super('Loading');
+    super('LoadingScene');
   }
 
   preload() {
