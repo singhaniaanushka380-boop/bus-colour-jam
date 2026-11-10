@@ -1,17 +1,19 @@
+// Fully synthesised audio (Web Audio API): Auto-unlocks on any touch/click.
+
 const midi = (n) => 440 * Math.pow(2, (n - 69) / 12);
 
 const CHORDS = [
-  { root: 48, notes: [60, 64, 67, 72] },
-  { root: 45, notes: [57, 60, 64, 69] },
-  { root: 41, notes: [53, 57, 60, 65] },
-  { root: 43, notes: [55, 59, 62, 67] },
+  { root: 48, notes: new Array(60, 64, 67, 72) },
+  { root: 45, notes: new Array(57, 60, 64, 69) },
+  { root: 41, notes: new Array(53, 57, 60, 65) },
+  { root: 43, notes: new Array(55, 59, 62, 67) },
 ];
-const ARP =;
+const ARP = new Array(0, 1, 2, 3, 2, 1, 2, 1);
 const MELODY = [
-  [76, null, 79, null, 76, null, 74, null],
-  [72, null, 76, null, 77, null, 76, null],
-  [77, null, 76, null, 72, null, 69, null],
-  [74, null, 79, 77, 76, null, null, null],
+  new Array(76, null, 79, null, 76, null, 74, null),
+  new Array(72, null, 76, null, 77, null, 76, null),
+  new Array(77, null, 76, null, 72, null, 69, null),
+  new Array(74, null, 79, 77, 76, null, null, null),
 ];
 
 export class AudioManager {
@@ -141,8 +143,8 @@ export class AudioManager {
       case 'unlock': this._sfxTone(500, 0, 0.1, 'triangle', 0.45); this._sfxTone(750, 0.09, 0.18, 'triangle', 0.45); break;
       case 'error': this._sfxTone(160, 0, 0.18, 'sawtooth', 0.25, 110); break;
       case 'star': this._sfxTone(midi(76 + n * 4), 0, 0.3, 'triangle', 0.5); break;
-      case 'win': [72, 76, 79, 84].forEach((m, i) => this._sfxTone(midi(m), i * 0.12, 0.32, 'triangle', 0.45)); break;
-      case 'fail': [67, 64, 60].forEach((m, i) => this._sfxTone(midi(m - 12), i * 0.18, 0.3, 'sawtooth', 0.25)); break;
+      case 'win': new Array(72, 76, 79, 84).forEach((m, i) => this._sfxTone(midi(m), i * 0.12, 0.32, 'triangle', 0.45)); break;
+      case 'fail': new Array(67, 64, 60).forEach((m, i) => this._sfxTone(midi(m - 12), i * 0.18, 0.3, 'sawtooth', 0.25)); break;
       default: break;
     }
   }
