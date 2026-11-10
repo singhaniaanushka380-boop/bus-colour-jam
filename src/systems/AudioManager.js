@@ -56,15 +56,15 @@ export class AudioManager {
         return;
       }
       this.master = this.ctx.createGain();
-      this.master.gain.value = 1.0; // Full master volume
+      this.master.gain.value = 1.0;
       this.master.connect(this.ctx.destination);
       
       this.sfxGain = this.ctx.createGain();
-      this.sfxGain.gain.value = 0.85; // Boosted SFX volume
+      this.sfxGain.gain.value = 0.85;
       this.sfxGain.connect(this.master);
       
       this.musicGain = this.ctx.createGain();
-      this.musicGain.gain.value = 0.30; // Boosted Music volume
+      this.musicGain.gain.value = 0.30;
       this.musicGain.connect(this.master);
     }
     if (this.ctx.state === 'suspended') {
