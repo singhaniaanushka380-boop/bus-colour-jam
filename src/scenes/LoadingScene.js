@@ -61,10 +61,14 @@ export class LoadingScene extends Phaser.Scene {
     if (this.shown >= 1) {
       this.done = true;
       this.time.delayedCall(150, () => {
-        this.scene.start('Menu');
+        if (this.scene.get('MenuScene')) {
+          this.scene.start('MenuScene');
+        } else {
+          this.scene.start('Menu');
+        }
       });
-    }
-  }
+    } //
+  } //
 }
 
 export default LoadingScene;
