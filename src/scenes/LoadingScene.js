@@ -58,17 +58,14 @@ export class LoadingScene extends Phaser.Scene {
     this.pct.setText(`Loading... ${Math.round(this.shown * 100)}%`);
     this.bus.x = GAME_W / 2 - this.barW / 2 + this.barW * this.shown;
     
-    if (this.shown >= 1) {
+     if (this.shown >= 1) {
       this.done = true;
       this.time.delayedCall(150, () => {
-        if (this.scene.get('MenuScene')) {
-          this.scene.start('MenuScene');
-        } else {
-          this.scene.start('Menu');
-        }
+        // Bhy yahan seedhe Menu chalu karenge jo aapke project ki exact active key hai
+        this.scene.start('Menu');
       });
-    } //
-  } //
+    }
+  }
 }
 
 export default LoadingScene;
