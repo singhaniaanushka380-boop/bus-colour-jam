@@ -1,5 +1,3 @@
-// Fully synthesised audio (Web Audio API): Auto-unlocks on any touch/click.
-
 const midi = (n) => 440 * Math.pow(2, (n - 69) / 12);
 
 const CHORDS = [
