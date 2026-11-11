@@ -1,11 +1,17 @@
 {
-  "name": "BUS COLOR JAM",
+  "name": "Bus Color Jam: 3D Puzzle",
   "short_name": "Bus Color Jam",
-  "description": "Park the buses, match the passengers, clear the jam.",
-  "start_url": "./",
-  "display": "fullscreen",
-  "orientation": "portrait",
+  "start_url": "/",
+  "display": "standalone",
   "background_color": "#4cc3ff",
   "theme_color": "#4cc3ff",
-  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
 }
