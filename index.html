@@ -9,7 +9,7 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta property="og:title" content="BUS COLOR JAM" />
-    <meta property="og:description" content="Park buses, match passengers, clear the jam. 30 levels of colourful puzzle fun!" />
+    <meta property="og:description" content="Park buses, match passengers, clear the jam. 200 levels of colourful puzzle fun!" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>BUS COLOR JAM</title>
@@ -22,5 +22,10 @@
     <div id="game-root"></div>
     <noscript>BUS COLOR JAM needs JavaScript enabled to run.</noscript>
     <script type="module" src="/src/main.js"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js');
+      }
+    </script>
   </body>
 </html>
