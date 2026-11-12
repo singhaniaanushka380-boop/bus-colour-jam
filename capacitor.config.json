@@ -1,0 +1,6 @@
+{
+  "appId": "com.rajat.buscolorjam",
+  "appName": "Bus Color Jam: 3D Puzzle",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}
