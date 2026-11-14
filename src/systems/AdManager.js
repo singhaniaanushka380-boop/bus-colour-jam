@@ -7,6 +7,7 @@ class AdManager {
     this.bannerId = 'ca-app-pub-4689051548603672/4057260421';
     this.interstitialId = 'ca-app-pub-4689051548603672/3714158845';
     this.rewardedId = 'ca-app-pub-4689051548603672/5425328787';
+    this.rewardedId = 'ca-app-pub-4689051548603672/1444744804';
   }
 
   async init() {
