@@ -1,6 +1,6 @@
 {
   "name": "bus-color-jam",
-  "version": "1.0.3",
+  "version": "1.0.2",
   "private": true,
   "description": "BUS COLOR JAM - an original bus passenger sorting puzzle game built with Phaser 3 and Vite.",
   "type": "module",
