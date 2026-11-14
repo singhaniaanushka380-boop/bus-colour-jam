@@ -264,6 +264,272 @@ export class TerminalStage {
     sun.target.position.set(0, 0, 4);
     sun.castShadow = true;
     const hi = (navigator.hardwareConcurrency || 4) > 4 && window.devicePixelRatio <= 2;
+// The 3D bus terminal (Three.js): figure-8 / loop passenger track at the top with dense 4-abreast gummy crowds,
+// 4 active bays + 1 VIP bay + 3 locked "+" bays in the middle, and a clean plaza parking area at the bottom.
+import * as THREE from 'three';
+import { Anim } from './Anim.js';
+import {
+  buildVehicle, buildGarage, pawnGeometries, MYSTERY_HEX, disposeTree, lambert, sharedGeo,
+} from './Models.js';
+import { COLORS, GAME_W, GAME_H } from '../config.js';
+import { isSpawned, isRevealed, TOTAL_BAYS } from '../systems/PuzzleValidator.js';
+
+// ---- tunable look & feel -------------------------------------------------------------------
+export const LIGHT = {
+  hemiSky: 0xf4f9ff, hemiGround: 0x9cd17a, hemi: 0.75,
+  sun: 0xfff8e7, sunI: 0.65, sunPos: [-5, 17, 6],
+  shadowSize: 1024,
+};
+export const CAMERA = { fov: 36, pitchDeg: 58, usable: { top: 0.74, bottom: -0.82, side: 0.97 } };
+export const COLORS_UI = { free: 0xffffff, taken: 0xffb02e, vip: 0xffd23f };
+const PI = Math.PI;
+
+// ---- layout constants (world units; 1 grid cell = 1 unit) -----------------------------------
+const NOSE_Z = -3.1;
+const BAY_LEN = 3.6;
+const ROAD_Z = 1.65;
+const DEP_Z = -3.75;
+const Q_BOT = -4.65;
+const QW = 4; // 4 passengers abreast in dense blocks just like the reference
+const LAT = 0.50; // tight shoulder-to-shoulder sideways spacing
+const ALONG = 0.48; // tight front-to-back row spacing
+const PS = 1.02;
+const PAX_Y = 0.04;
+const POOL_EXTRA = 16;
+
+const THEMES = [
+  { name: 'park', sky: 0x9bd870, top: 0x86cf58, low: 0xd8dfec, road: 0x5c6274, bush: 0x3ea34a, path: 0x62687a },
+  { name: 'meadow', sky: 0xa2de78, top: 0x8fd660, low: 0xdce2ef, road: 0x5c6274, bush: 0x2f9a56, path: 0x62687a },
+  { name: 'city', sky: 0x9bd870, top: 0x86cf58, low: 0xd8dfec, road: 0x5c6274, bush: 0x4aa35a, path: 0x62687a },
+  { name: 'autumn', sky: 0xe6c373, top: 0xd5b15c, low: 0xe7dfd0, road: 0x635d6e, bush: 0xc8641e, path: 0x6b6476 },
+  { name: 'snow', sky: 0xd9ecff, top: 0xe6f2fc, low: 0xe0eaf5, road: 0x657187, bush: 0x4a9a74, path: 0x6e7b92 },
+];
+
+const v3 = (x, y, z) => new THREE.Vector3(x, y, z);
+const heading = (dx, dz) => Math.atan2(-dz, dx);
+const lerpHex = (a, b, t) => {
+  const ar = (a >> 16) & 255; const ag = (a >> 8) & 255; const ab = a & 255;
+  const br = (b >> 16) & 255; const bg = (b >> 8) & 255; const bb = b & 255;
+  return (Math.round(ar + (br - ar) * t) << 16) | (Math.round(ag + (bg - ag) * t) << 8) | Math.round(ab + (bb - ab) * t);
+};
+
+function smoothPath(pts, radius = 0.7, steps = 8) {
+  if (pts.length < 3) return pts.map((p) => p.clone());
+  const out = [pts[0].clone()];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1];
+    const v = pts[i];
+    const b = pts[i + 1];
+    const da = a.clone().sub(v);
+    const db = b.clone().sub(v);
+    if (da.length() < 1e-4 || db.length() < 1e-4) continue;
+    const ra = Math.min(radius, da.length() / 2);
+    const rb = Math.min(radius, db.length() / 2);
+    const p1 = v.clone().add(da.normalize().multiplyScalar(ra));
+    const p2 = v.clone().add(db.normalize().multiplyScalar(rb));
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const u = 1 - t;
+      out.push(v3(u * u * p1.x + 2 * u * t * v.x + t * t * p2.x, 0, u * u * p1.z + 2 * u * t * v.z + t * t * p2.z));
+    }
+  }
+  out.push(pts[pts.length - 1].clone());
+  return out;
+}
+
+const bayTex = {};
+function bayTexture(key) {
+  const vip = key === 'vip';
+  if (bayTex[key]) return bayTex[key];
+  const c = document.createElement('canvas');
+  c.width = 96; c.height = 352;
+  const g = c.getContext('2d');
+  g.strokeStyle = '#ffffff';
+  g.lineWidth = 7;
+  g.beginPath();
+  const x = 5; const y = 5; const w = 86; const h = 342; const r = 24;
+  g.moveTo(x + r, y); g.lineTo(x + w - r, y); g.quadraticCurveTo(x + w, y, x + w, y + r);
+  g.lineTo(x + w, y + h - r); g.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  g.lineTo(x + r, y + h); g.quadraticCurveTo(x, y + h, x, y + h - r);
+  g.lineTo(x, y + r); g.quadraticCurveTo(x, y, x + r, y);
+  g.closePath();
+  g.stroke();
+  if (vip) {
+    g.save();
+    g.translate(48, 176);
+    g.rotate(-Math.PI / 2);
+    g.fillStyle = '#ffffff';
+    g.font = 'bold 52px Arial, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText('VIP', 0, 0);
+    g.restore();
+  }
+  if (key === 'plus') {
+    g.lineWidth = 9;
+    g.beginPath(); g.moveTo(48, 150); g.lineTo(48, 202); g.moveTo(22, 176); g.lineTo(74, 176); g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  bayTex[key] = t;
+  return t;
+}
+
+export class TerminalStage {
+  constructor(game) {
+    this.game = game;
+    this.ok = false;
+    this.visible = false;
+    this.t = 0;
+    this.anim = new Anim();
+    this.level = null;
+    this.lg = null;
+    this.buses = [];
+    this.qrec = new Map();
+    this.q = [];
+    this.qNext = 0;
+    this.hitList = [];
+    this.hint = null;
+    this.colorCache = new Map();
+    try {
+      this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    } catch (e) {
+      console.warn('[BusColorJam] WebGL unavailable', e);
+      return;
+    }
+    this.ok = true;
+    const low = (navigator.hardwareConcurrency || 4) <= 4;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, low ? 1.5 : 2));
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    this.root = document.createElement('div');
+    this.root.id = 'three-root';
+    this.root.style.display = 'none';
+    const el = this.renderer.domElement;
+    el.style.position = 'absolute';
+    el.style.pointerEvents = 'none';
+    el.style.display = 'block';
+    this.root.appendChild(el);
+    document.body.insertBefore(this.root, document.body.firstChild);
+    el.addEventListener('webglcontextlost', (e) => e.preventDefault());
+
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x9bd870);
+    this.camera = new THREE.PerspectiveCamera(CAMERA.fov, GAME_W / GAME_H, 0.5, 200);
+    this.raycaster = new THREE.Raycaster();
+    this._d = new THREE.Object3D();
+    this._mG = new THREE.Matrix4();
+    this._mP = new THREE.Matrix4();
+    this._mM = new THREE.Matrix4();
+    this._vs = new THREE.Vector3();
+    this._buildLights();
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200).rotateX(-PI / 2), lambert(0x86cf58));
+    ground.position.y = -0.08;
+    ground.receiveShadow = true;
+    this.scene.add(ground);
+    this.ground = ground;
+
+    this._onResize = () => this.syncRect();
+    window.addEventListener('resize', this._onResize);
+    window.addEventListener('orientationchange', this._onResize);
+    game.scale.on('resize', this._onResize);
+    this.syncRect();
+  }
+
+  // ------------------------------------------------------------------ canvas / camera
+  syncRect() {
+    if (!this.ok) return;
+    const r = this.game.canvas.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return;
+    const el = this.renderer.domElement;
+    el.style.left = `${r.left}px`;
+    el.style.top = `${r.top}px`;
+    el.style.width = `${r.width}px`;
+    el.style.height = `${r.height}px`;
+    this.renderer.setSize(r.width, r.height, false);
+    const aspect = r.width / r.height;
+    if (Math.abs(aspect - this.camera.aspect) > 1e-4) {
+      this.camera.aspect = aspect;
+      this.camera.updateProjectionMatrix();
+      if (this.level) this._fitCamera();
+    }
+  }
+
+  show() {
+    if (!this.ok) return;
+    this.root.style.display = 'block';
+    this.visible = true;
+    this.syncRect();
+  }
+
+  hide() {
+    if (!this.ok) return;
+    this.root.style.display = 'none';
+    this.visible = false;
+  }
+
+  /** Aims the camera so the whole terminal fits inside the area not covered by the HUD. */
+  _fitCamera() {
+    const { Rr, zMax, zMin } = this.L;
+    const cam = this.camera;
+    const u = CAMERA.usable;
+    const p = (CAMERA.pitchDeg * PI) / 180;
+    const up = v3(0, Math.cos(p), -Math.sin(p));
+    const corners = [];
+    for (const x of [-(Rr + 0.4), Rr + 0.4]) for (const z of [zMin, zMax]) for (const y of [0, 1.2]) corners.push(v3(x, y, z));
+    const target = v3(0, 0, (zMin + zMax) / 2);
+    let dist = 20;
+    const place = () => {
+      cam.position.set(target.x, target.y + Math.sin(p) * dist, target.z + Math.cos(p) * dist);
+      cam.lookAt(target);
+      cam.updateMatrixWorld(true);
+    };
+    const bbox = () => {
+      let minX = 9; let maxX = -9; let minY = 9; let maxY = -9;
+      for (const c of corners) {
+        const q = c.clone().project(cam);
+        minX = Math.min(minX, q.x); maxX = Math.max(maxX, q.x);
+        minY = Math.min(minY, q.y); maxY = Math.max(maxY, q.y);
+      }
+      return { minX, maxX, minY, maxY };
+    };
+    const fits = () => {
+      const b = bbox();
+      return b.maxX <= u.side && b.minX >= -u.side && b.maxY <= u.top && b.minY >= u.bottom;
+    };
+    for (let iter = 0; iter < 3; iter++) {
+      let lo = 6;
+      let hi = 120;
+      for (let k = 0; k < 24; k++) {
+        dist = (lo + hi) / 2;
+        place();
+        if (fits()) hi = dist; else lo = dist;
+      }
+      dist = hi;
+      place();
+      const b = bbox();
+      const dy = (b.minY + b.maxY) / 2 - (u.top + u.bottom) / 2;
+      const H = dist * Math.tan((CAMERA.fov * PI) / 360);
+      target.addScaledVector(up, dy * H);
+    }
+    place();
+  }
+
+  /** World point -> design-space (540x960) coordinates for Phaser labels. */
+  project(x, y, z) {
+    const q = v3(x, y, z).project(this.camera);
+    return { x: (q.x * 0.5 + 0.5) * GAME_W, y: (1 - (q.y * 0.5 + 0.5)) * GAME_H };
+  }
+
+  _buildLights() {
+    const k = PI;
+    this.scene.add(new THREE.HemisphereLight(LIGHT.hemiSky, LIGHT.hemiGround, LIGHT.hemi * k));
+    const sun = new THREE.DirectionalLight(LIGHT.sun, LIGHT.sunI * k);
+    sun.position.set(...LIGHT.sunPos);
+    sun.target.position.set(0, 0, 4);
+    sun.castShadow = true;
+    const hi = (navigator.hardwareConcurrency || 4) > 4 && window.devicePixelRatio <= 2;
 sun.shadow.mapSize.set(hi ? 2048 : LIGHT.shadowSize, hi ? 2048 : LIGHT.shadowSize);
 const sc = sun.shadow.camera;
 sc.left = -13; sc.right = 13; sc.top = 17; sc.bottom = -17; sc.near = 2; sc.far = 60;
@@ -302,7 +568,7 @@ const { w, h } = level;
 const lotCZ = ROAD_Z + 0.9 + h / 2;
 const Rr = Math.max(w / 2 + 1.5, 5.6);
 const theme = THEMES[(level.id * 5 + Math.floor(level.id / 4)) % THEMES.length];
-// Two wide S-curved crowd lanes curving around the central green triangle island (just like the reference)
+// Two wide S-curved crowd lanes curving around the central green triangle island
 const sx = Math.max(0.55, (Rr - 1.65) / 4.8);
 const baseLane = [
 [-0.32, -1.2],
@@ -316,11 +582,13 @@ const baseLane = [
 const lanes = [1, -1].map((sgn) => {
 const raw = baseLane.map(([x, z]) => v3(sgn * (Math.abs(x) > 0.5 ? x * sx : x), 0, Q_BOT + z));
 const sm = smoothPath(raw, 1.35, 10);
-const pts = []; const cum =;
+const pts = [];
+const cum =;
 let acc = 0;
 pts.push([sm[0].x, sm[0].z]);
 for (let i = 1; i < sm.length; i++) {
-const dx = sm[i].x - sm[i - 1].x; const dz = sm[i].z - sm[i - 1].z;
+const dx = sm[i].x - sm[i - 1].x;
+const dz = sm[i].z - sm[i - 1].z;
 const d = Math.hypot(dx, dz);
 if (d < 1e-6) continue;
 acc += d;
@@ -330,7 +598,6 @@ cum.push(acc);
 return { pts, cum, len: acc };
 });
 const visLane = Math.floor((lanes[0].len - 0.6) / ALONG) * QW;
-// Slight diagonal tilt to the 8 parking bays (matching the reference layout)
 const bayAngles = [-0.22, -0.15, -0.08, -0.02, 0.04, 0.10, 0.16, -0.28];
 this.L = {
 w, h, lotCZ, Rr, zMax: lotCZ + h / 2 + 0.7, zMin: Q_BOT - 6.6,
@@ -475,7 +742,6 @@ const x = sgn * (Rr - 0.55);
 bush(x, Q_BOT - 0.55, 1.05, true);
 bush(x - sgn * 0.75, Q_BOT - 1.1, 0.78, true);
 bush(x + sgn * 0.45, Q_BOT - 2.4, 0.85, false);
-// Central triangular island bushes
 bush(sgn * 0.65, Q_BOT - 3.6, 0.85, true);
 bush(0, Q_BOT - 4.4, 0.95, true);
 }
@@ -528,12 +794,15 @@ this.pawnDirty = true;
 _lanePtOf(ln, d) {
 const { pts, cum, len } = ln;
 const dd = Math.min(Math.max(d, 0), len);
-let lo = 1; let hi = cum.length - 1;
+let lo = 1;
+let hi = cum.length - 1;
 while (lo < hi) { const mid = (lo + hi) >> 1; if (cum[mid] < dd) lo = mid + 1; else hi = mid; }
-const a = pts[lo - 1]; const b = pts[lo];
+const a = pts[lo - 1];
+const b = pts[lo];
 const span = cum[lo] - cum[lo - 1] || 1;
 const t = (dd - cum[lo - 1]) / span;
-const tx = b[0] - a[0]; const tz = b[1] - a[1];
+const tx = b[0] - a[0];
+const tz = b[1] - a[1];
 const tl = Math.hypot(tx, tz) || 1;
 return { x: a[0] + tx * t, z: a[1] + tz * t, tx: tx / tl, tz: tz / tl };
 }
