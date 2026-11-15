@@ -5,6 +5,9 @@ on:
   push:
     branches: [ main, master ]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -68,12 +71,12 @@ jobs:
             android/app/build/outputs/apk/release/app-release.apk
             android/app/build/outputs/bundle/release/app-release.aab
 
-      - name: Auto-Push APK to itch.io via Official Butler
-        continue-on-error: true
-        env:
-          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
-        run: |
-          curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 -o butler.zip https://itch.zone
-          unzip -q butler.zip
-          chmod +x butler
-          ./butler push android/app/build/outputs/apk/release/app-release.apk rajat-verma1555/bus-color-jam:android
+      - name: Publish Direct Download Link (GitHub Release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-apk
+          name: Bus Color Jam Latest Android APK
+          make_latest: true
+          files: |
+            android/app/build/outputs/apk/release/app-release.apk
+            android/app/build/outputs/bundle/release/app-release.aab
