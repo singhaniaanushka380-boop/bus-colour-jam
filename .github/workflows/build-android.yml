@@ -68,11 +68,11 @@ jobs:
             android/app/build/outputs/apk/release/app-release.apk
             android/app/build/outputs/bundle/release/app-release.aab
 
-      - name: Auto-Push APK to itch.io
-        uses: josephbmanley/butler-publish-itchio-action@v1.0.3
+      - name: Auto-Push APK to itch.io via Official Butler
         env:
-          BUTLER_CREDENTIALS: ${{ secrets.BUTLER_API_KEY }}
-          CHANNEL: android
-          ITCH_GAME: rajat-verma1555/bus-color-jam
-          ITCH_USER: rajat-verma1555
-          PACKAGE: android/app/build/outputs/apk/release/app-release.apk
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+        run: |
+          curl -L -o butler.zip https://itch.zone
+          unzip -q butler.zip
+          chmod +x butler
+          ./butler push android/app/build/outputs/apk/release/app-release.apk rajat-verma1555/bus-color-jam:android
