@@ -37,11 +37,12 @@ jobs:
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           sed -i 's/<\/application>/        <meta-data android:name="com.google.android.gms.ads.APPLICATION_ID" android:value="ca-app-pub-4689051548603672~5150767123"\/>\n    <\/application>/g' $MANIFEST
 
-      - name: Update Version Code & Name
+      - name: Auto-Increment Version Code & Name
         run: |
           GRADLE="android/app/build.gradle"
-          sed -i 's/versionCode 1/versionCode 3/g' $GRADLE
-          sed -i 's/versionName "1.0"/versionName "1.0.2"/g' $GRADLE
+          VER_CODE=$((GITHUB_RUN_NUMBER + 10))
+          sed -i "s/versionCode 1/versionCode $VER_CODE/g" $GRADLE
+          sed -i "s/versionName \"1.0\"/versionName \"1.0.$VER_CODE\"/g" $GRADLE
 
       - name: Sync Capacitor
         run: npx cap sync android
@@ -66,3 +67,12 @@ jobs:
           path: |
             android/app/build/outputs/apk/release/app-release.apk
             android/app/build/outputs/bundle/release/app-release.aab
+
+      - name: Auto-Push APK to itch.io
+        uses: josephbmanley/butler-publish-itchio-action@v1.0.3
+        env:
+          BUTLER_CREDENTIALS: ${{ secrets.BUTLER_API_KEY }}
+          CHANNEL: android
+          ITCH_GAME: rajat-verma1555/bus-color-jam
+          ITCH_USER: rajat-verma1555
+          PACKAGE: android/app/build/outputs/apk/release/app-release.apk
