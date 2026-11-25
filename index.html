@@ -15,10 +15,15 @@
     <title>BUS COLOR JAM</title>
   </head>
   <body>
+    <!-- Splash: 1) RJ GAMES logo, then 2) BUS COLOR JAM artwork, then a fade-out onto the game (see BootScene) -->
     <div id="boot-splash">
-      <div class="title">BUS COLOR JAM</div>
-      <div class="spinner"></div>
+      <div class="slide rj"><img class="logo" src="/assets/rj_splash.jpg" alt="RJ GAMES" draggable="false" /></div>
+      <div class="slide bcj">
+        <img class="logo" src="/assets/bcj_splash.jpg" alt="BUS COLOR JAM" draggable="false" />
+        <div class="loadbar"><div class="fill"></div><span class="pct">LOADING 0%</span></div>
+      </div>
     </div>
+    <script>window.__splashT0 = Date.now();</script>
     <div id="game-root"></div>
     <noscript>BUS COLOR JAM needs JavaScript enabled to run.</noscript>
     <script type="module" src="/src/main.js"></script>

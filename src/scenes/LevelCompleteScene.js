@@ -21,7 +21,6 @@ export class LevelCompleteScene extends Phaser.Scene {
     // interstitial ad after every 2nd completed level (natural pause - never during play)
     this.time.delayedCall(900, () => { try { adManager.onLevelComplete(); } catch (e) { /* ignore */ } });
     UI.enter(this);
-    (this.result.achievements || []).forEach((a, i) => this.time.delayedCall(1400 + i * 1900, () => { gm.audio.sfx('unlock'); UI.toast(this, `Achievement: ${a.name}  +${a.coins}`, 150); }));
     const level = LevelManager.get(this.levelId);
     const reward = this.result.reward;
     this.add.image(0, 0, 'bg_menu').setOrigin(0);

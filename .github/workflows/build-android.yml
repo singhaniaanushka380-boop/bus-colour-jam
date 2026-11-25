@@ -47,6 +47,45 @@ jobs:
           sed -i "s/versionCode 1/versionCode $VER_CODE/g" $GRADLE
           sed -i "s/versionName \"1.0\"/versionName \"1.0.$VER_CODE\"/g" $GRADLE
 
+      - name: Remove Android system splash (app icon) - the game shows its own RJ GAMES splash
+        run: |
+          RES="android/app/src/main/res"
+          mkdir -p "$RES/values"
+          # dark purple = same colour as the edge of the RJ GAMES splash, so the start looks seamless
+          echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="rj_splash_bg">#030120</color></resources>' > "$RES/values/rj_splash_colors.xml"
+          python3 - <<'PY'
+          import re, sys
+          path = "android/app/src/main/res/values/styles.xml"
+          s = open(path, encoding="utf-8").read()
+          m = re.search(r'<style\s+name="AppTheme\.NoActionBarLaunch"[^>]*>.*?</style>', s, re.S)
+          if not m:
+              print("WARNING: launch style not found, system splash left unchanged"); sys.exit(0)
+          block = m.group(0)
+          # drop whatever the template had for splash pictures / splash icon, then set our own
+          block = re.sub(r'\s*<item name="android:background">.*?</item>', '', block, flags=re.S)
+          block = re.sub(r'\s*<item name="(android:)?windowSplashScreen\w*">.*?</item>', '', block, flags=re.S)
+          items = (
+              '\n        <item name="android:background">@color/rj_splash_bg</item>'
+              '\n        <item name="android:windowSplashScreenBackground">@color/rj_splash_bg</item>'
+              '\n        <item name="android:windowSplashScreenAnimatedIcon">@android:color/transparent</item>'
+          )
+          if "Theme.SplashScreen" in block:  # androidx splash theme (Capacitor 6 default)
+              items += (
+                  '\n        <item name="windowSplashScreenBackground">@color/rj_splash_bg</item>'
+                  '\n        <item name="windowSplashScreenAnimatedIcon">@android:color/transparent</item>'
+              )
+          block = block.replace("</style>", items + "\n    </style>")
+          open(path, "w", encoding="utf-8").write(s.replace(m.group(0), block))
+          print("---- styles.xml after change ----")
+          print(open(path, encoding="utf-8").read())
+          PY
+
+      - name: Allow phone vibration (Settings > Vibration)
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          grep -q "android.permission.VIBRATE" "$MANIFEST" || sed -i 's#<application#<uses-permission android:name="android.permission.VIBRATE" />\n    <application#' "$MANIFEST"
+          grep -n "VIBRATE" "$MANIFEST"
+
       - name: Sync Capacitor
         run: npx cap sync android
 

@@ -1,3 +1,5 @@
+import { openPausePanel } from '../ui/PausePanel.js';
+import { showGreatJob } from '../ui/GreatJob.js';
 import Phaser from 'phaser';
 import { GAME_W, GAME_H, BOOST_COST, COLORS } from '../config.js';
 import { gm } from '../systems/GameManager.js';
@@ -61,6 +63,7 @@ export class GameScene extends Phaser.Scene {
     this.stage.sync(this.state);
     this.stage.show();
     this.shownBoarded = 0;
+    this.resetFlow();
 
     this.input.setTopOnly(true);
     this.tapZone = this.add.zone(0, 0, GAME_W, GAME_H).setOrigin(0).setInteractive().setDepth(1);
@@ -79,7 +82,9 @@ export class GameScene extends Phaser.Scene {
     this.hud.setProgress(0);
     this.hud.setVipUsed(false);
 
+    const offInv = gm.onInv((inv) => this.hud?.setInventory(inv));
     this.events.once('shutdown', () => {
+      offInv();
       this.dead = true;
       this.token++;
       this.hud?.destroy();
@@ -164,6 +169,7 @@ export class GameScene extends Phaser.Scene {
     if (i < 0) return;
     gm.audio.unlock?.();
     const why = whyBlocked(this.level, this.state, i);
+    if (why && why.reason === 'gone') return null;
     if (why) return this.deny(i, why);
     return this.doMove(i);
   }
@@ -181,18 +187,32 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  async doMove(i) {
+  // ------------------------------------------------------------------ moves
+  // The rules (PuzzleValidator) are applied INSTANTLY on tap. The animation then runs as a pipeline:
+  //  - the tapped vehicle starts driving to its bay right away (it only waits if a bus is still pulling out of that bay),
+  //  - passengers board in queue order (35 ms apart) as soon as their vehicle is in its bay,
+  //  - a vehicle leaves the very moment its last passenger has hopped in.
+  // So the player can keep tapping without waiting for anyone to finish boarding.
+  resetFlow() {
+    this.arrive = {};
+    this.after = {};
+    this.bayFree = Array.from({ length: TOTAL_BAYS }, () => Promise.resolve());
+    this.animQ = Promise.resolve();
+    this.inflight = 0;
+    this.idleWaiters = [];
+  }
+
+  /** Resolves when every running vehicle / boarding animation has finished. */
+  whenIdle() {
+    return this.inflight === 0 ? Promise.resolve() : new Promise((res) => this.idleWaiters.push(res));
+  }
+
+  doMove(i) {
     const tk = this.token;
     this.stage.setHint(null);
     this.moveCount++;
-    this.setBusy(true);
-    const before = this.state.removed;
     const res = exitBus(this.level, this.state, i);
-    const ok = await this.playEvents(res.events, tk, before);
-    if (!ok) return;
-    this.refreshLabels();
-    this.setBusy(false);
-    this.afterMove();
+    return this.launch(res.events, tk); // resolves when the animation is over (callers normally do not wait)
   }
 
   afterMove() {
@@ -201,63 +221,106 @@ export class GameScene extends Phaser.Scene {
     return null;
   }
 
-  // ------------------------------------------------------------------ rule events -> 3D animation
-  async playEvents(events, tk) {
+  /** Starts the animation of rule events that were already applied to this.state. */
+  launch(events, tk) {
     const st = this.stage;
-    let pending = [];
-    let shown = this.shownBoarded;
-    const aftermath = async () => {
-      // vehicles that left the grid unlock garages and reveal mystery vehicles
-      const jobs = [];
-      this.level.buses.forEach((b, j) => {
-        const e = st.buses[j];
-        if (e.where === 'garage' && isSpawned(this.level, this.state, j)) jobs.push(st.emerge(j));
-        else if (e.where === 'lot' && !e.obj.revealed && isRevealed(this.level, this.state, j)) jobs.push(st.reveal(j));
-      });
-      await Promise.all(jobs);
-    };
+    this.inflight++;
     for (const ev of events) {
-      if (!this.alive(tk)) return false;
       if (ev.type === 'park') {
         gm.audio.sfx('park');
-        const ok = await st.driveToBay(ev.bus, ev.bay);
-        if (!ok || !this.alive(tk)) return false;
-        this.labelBay(ev.bay, ev.bus, 0);
-        pending.push(aftermath());
-      } else if (ev.type === 'board') {
-        const col = COLORS[ev.color];
-        pending.push(
-          st.boardOne(ev.bus, ev.bay).then((ok) => {
-            if (!ok || !this.alive(tk)) return;
-            shown++;
-            this.shownBoarded = shown;
-            this.hud.setProgress(shown);
-            this.labelBay(ev.bay, ev.bus, ev.seat + 1);
-            gm.audio.sfx('board', Math.min(7, ev.seat));
-            const p = st.project(st.L.bayX[ev.bay], 1, st.parkZ(3));
-            Fx.burst(this, p.x, p.y, { color: col.light, count: 5, speed: 45, life: 350 });
-          }),
-        );
-        await this.wait(60);
+        const e = st.buses[ev.bus];
+        st.hitList = st.hitList.filter((h) => h !== e.obj.hit); // can't be tapped twice
+        const prev = this.bayFree[ev.bay];
+        this.arrive[ev.bus] = prev.then(() => {
+          if (!this.alive(tk)) return false;
+          const drive = st.driveToBay(ev.bus, ev.bay);
+          // as soon as the vehicle has pulled away, garages push out their next vehicle and mystery vehicles show their colour
+          this.after[ev.bus] = st.anim.wait(350).then(() => (this.alive(tk) ? this.aftermath() : null));
+          return drive;
+        }).then((ok) => {
+          if (ok && this.alive(tk)) this.labelBay(ev.bay, ev.bus, 0);
+          return !!ok;
+        });
       } else if (ev.type === 'depart') {
-        const waitFor = pending.splice(0);
-        pending.push(Promise.all(waitFor).then(async () => {
-          if (!this.alive(tk)) return;
-          gm.audio.sfx('depart');
-          this.pills[ev.bay].g.setVisible(false);
-          this.pills[ev.bay].t.setVisible(false);
-          const p = st.project(st.L.bayX[ev.bay], 1, st.parkZ(3));
-          Fx.burst(this, p.x, p.y, { color: 0xffffff, count: 12, speed: 70, life: 520 });
-          Fx.ring(this, p.x, p.y, COLORS[st.buses[ev.bus].obj.color].main);
-          await st.departBus(ev.bus, ev.bay);
-        }));
+        ev.free = {};
+        this.bayFree[ev.bay] = new Promise((res) => { ev.free.resolve = res; });
       }
     }
-    await Promise.all(pending);
-    if (!this.alive(tk)) return false;
-    this.shownBoarded = this.state.boarded;
-    this.hud.setProgress(this.state.boarded);
-    return true;
+    const slot = this.animQ.then(() => this.dispatch(events, tk));
+    this.animQ = slot.then(() => {}, () => {});
+    return slot.then((r) => (r ? r.done : false)).catch(() => false).then((ok) => {
+      this.inflight--;
+      if (this.alive(tk) && this.inflight === 0) {
+        this.shownBoarded = this.state.boarded;
+        this.hud.setProgress(this.state.boarded);
+        this.refreshLabels();
+        const waiters = this.idleWaiters.splice(0);
+        waiters.forEach((f) => f());
+        if (!this.busy) this.afterMove();
+      }
+      return ok;
+    });
+  }
+
+  /** Aftermath of a vehicle leaving the grid: garages push out the next vehicle, mystery vehicles show their colour. */
+  aftermath() {
+    const st = this.stage;
+    const jobs = [];
+    this.level.buses.forEach((b, j) => {
+      const e = st.buses[j];
+      if (e.where === 'garage' && isSpawned(this.level, this.state, j)) jobs.push(st.emerge(j));
+      else if (e.where === 'lot' && !e.obj.revealed && isRevealed(this.level, this.state, j)) jobs.push(st.reveal(j));
+    });
+    return Promise.all(jobs);
+  }
+
+  /** Hands passengers to their vehicles one after another. Resolves {done} once they have all been dispatched. */
+  async dispatch(events, tk) {
+    const st = this.stage;
+    const jobs = [];
+    const boards = new Map();
+    for (const ev of events) {
+      if (!this.alive(tk)) return { done: Promise.resolve(false) };
+      if (ev.type === 'park') {
+        jobs.push((this.arrive[ev.bus] || Promise.resolve(true)).then(() => this.after[ev.bus]));
+      } else if (ev.type === 'board') {
+        const ok = await (this.arrive[ev.bus] || Promise.resolve(true)); // passengers start once the vehicle is in its bay
+        if (!ok || !this.alive(tk)) return { done: Promise.resolve(false) };
+        const col = COLORS[ev.color];
+        const job = st.boardOne(ev.bus, ev.bay).then((done) => {
+          if (!done || !this.alive(tk)) return;
+          this.shownBoarded++;
+          this.hud.setProgress(this.shownBoarded);
+          this.labelBay(ev.bay, ev.bus, ev.seat + 1);
+          gm.audio.sfx('board', Math.min(7, ev.seat));
+          const p = st.project(st.L.bayX[ev.bay], 1, st.parkZ(3));
+          Fx.burst(this, p.x, p.y, { color: col.light, count: 5, speed: 45, life: 350 });
+        });
+        if (!boards.has(ev.bus)) boards.set(ev.bus, []);
+        boards.get(ev.bus).push(job);
+        jobs.push(job);
+        await this.wait(35);
+      } else if (ev.type === 'depart') {
+        // the vehicle is full: it pulls out at once, the moment its last passenger is inside
+        jobs.push(Promise.all(boards.get(ev.bus) || []).then(() => this.departNow(ev, tk)));
+      }
+    }
+    return { done: Promise.all(jobs).then(() => true) };
+  }
+
+  async departNow(ev, tk) {
+    const st = this.stage;
+    if (!this.alive(tk)) return;
+    gm.audio.sfx('depart');
+    this.pills[ev.bay].g.setVisible(false);
+    this.pills[ev.bay].t.setVisible(false);
+    const p = st.project(st.L.bayX[ev.bay], 1, st.parkZ(3));
+    Fx.burst(this, p.x, p.y, { color: 0xffffff, count: 12, speed: 70, life: 520 });
+    Fx.ring(this, p.x, p.y, COLORS[st.buses[ev.bus].obj.color].main);
+    // the bay counts as free for the next vehicle as soon as this one has pulled clear of it
+    st.anim.wait(280).then(() => ev.free?.resolve());
+    await st.departBus(ev.bus, ev.bay);
+    ev.free?.resolve();
   }
 
   labelBay(bay, busIdx, fill) {
@@ -301,12 +364,18 @@ export class GameScene extends Phaser.Scene {
     this.paused = true;
     const vip = bay === VIP_BAY;
     const cost = this.costOf(bay);
+    const token = vip && gm.inv.vip > 0; // a VIP slot won in the shop / lucky spin
     const rich = gm.coins >= cost;
     const d = UI.dialog(this, { title: vip ? 'VIP SLOT' : 'EXTRA SLOT', w: 420, h: 360, onClose: () => (this.paused = false) });
     const c = d.c;
     const what = vip ? 'Open the VIP parking slot\nand park one more vehicle!' : 'Unlock one more parking slot\nfor this level!';
-    c.add(UI.text(this, 0, -90, rich ? what : `${what}\n(You need ${cost} coins)`, 20, { color: '#1b2a52', stroke: '#ffffff', thick: 0 }));
-    if (rich) {
+    c.add(UI.text(this, 0, -90, token || rich ? what : `${what}\n(You need ${cost} coins)`, 20, { color: '#1b2a52', stroke: '#ffffff', thick: 0 }));
+    if (token) {
+      c.add(UI.button(this, 0, 0, 320, 72, `USE FREE VIP (${gm.inv.vip})`, {
+        color: 0xffb62e, icon: 'lock', size: 22,
+        onClick: () => { if (!gm.useItem('vip')) return; d.close(true); this.applyUnlock(bay); },
+      }));
+    } else if (rich) {
       c.add(UI.button(this, 0, 0, 320, 72, `USE ${cost} COINS`, {
         color: 0xffb62e, icon: 'lock', size: 24,
         onClick: () => { if (!this.pay(cost)) return; d.close(true); this.applyUnlock(bay); },
@@ -324,7 +393,8 @@ export class GameScene extends Phaser.Scene {
    * Booster payment. Enough coins -> pay and resolve 'coins'. Not enough -> a dialog offering a rewarded ad;
    * resolves 'ad' after the reward, or null if the player backs out / no ad was available.
    */
-  payOrAd(cost, title, text) {
+  payOrAd(cost, title, text, kind) {
+    if (kind && gm.useItem(kind)) return Promise.resolve('item'); // free token from a bundle / lucky spin
     if (gm.spendCoins(cost)) return Promise.resolve('coins');
     return new Promise((resolve) => {
       this.paused = true;
@@ -360,21 +430,29 @@ export class GameScene extends Phaser.Scene {
 
   applyVip() { return this.applyUnlock(VIP_BAY); }
 
+  /** Gives back what a booster cost when it turned out to change nothing. */
+  refund(how, cost, kind) {
+    if (how === 'coins') gm.addCoins(cost);
+    else if (how === 'item') gm.addItem(kind, 1);
+  }
+
   async boostPeople() {
     if (this.busy || this.over || this.paused) return;
     if (this.state.queue.length - this.state.qp < 2) { UI.toast(this, 'Nobody to shuffle'); return; }
-    const how = await this.payOrAd(BOOST_COST.pax, 'ARRANGE', 'Re-arrange the waiting passengers\nso the right colours come first.');
+    const how = await this.payOrAd(BOOST_COST.pax, 'ARRANGE', 'Re-arrange the waiting passengers\nso the right colours come first.', 'pax');
     if (!how || this.dead) return;
     const tk = this.token;
+    await this.whenIdle(); // let running vehicles finish first
+    if (!this.alive(tk)) return;
     this.setBusy(true);
     const changed = shufflePassengers(this.level, this.state);
-    if (!changed) { if (how === 'coins') gm.addCoins(BOOST_COST.pax); UI.toast(this, 'Queue is already ideal' + (how === 'coins' ? ' - coins refunded' : '')); this.setBusy(false); return; }
+    if (!changed) { this.refund(how, BOOST_COST.pax, 'pax'); UI.toast(this, 'Queue is already ideal' + (how !== 'ad' ? ' - refunded' : '')); this.setBusy(false); return; }
     gm.audio.sfx('unlock');
     this.stage.resetQueue(this.state.queue, this.state.qp, true);
     UI.toast(this, 'Passengers shuffled!');
     await this.wait(500);
     const events = settle(this.level, this.state);
-    if (events.length && !(await this.playEvents(events, tk))) return;
+    if (events.length && !(await this.launch(events, tk))) return;
     if (!this.alive(tk)) return;
     this.refreshLabels();
     this.setBusy(false);
@@ -383,12 +461,14 @@ export class GameScene extends Phaser.Scene {
 
   async boostColors() {
     if (this.busy || this.over || this.paused) return;
-    const how = await this.payOrAd(BOOST_COST.colors, 'JUMBLE', 'Shuffle the colours of the\nparked and waiting vehicles.');
+    const how = await this.payOrAd(BOOST_COST.colors, 'JUMBLE', 'Shuffle the colours of the\nparked and waiting vehicles.', 'colors');
     if (!how || this.dead) return;
     const tk = this.token;
+    await this.whenIdle();
+    if (!this.alive(tk)) return;
     this.setBusy(true);
     const changed = shuffleColors(this.level, this.state);
-    if (!changed) { if (how === 'coins') gm.addCoins(BOOST_COST.colors); UI.toast(this, 'No better colours' + (how === 'coins' ? ' - coins refunded' : '')); this.setBusy(false); return; }
+    if (!changed) { this.refund(how, BOOST_COST.colors, 'colors'); UI.toast(this, 'No better colours' + (how !== 'ad' ? ' - refunded' : '')); this.setBusy(false); return; }
     gm.audio.sfx('unlock');
     await this.stage.recolor(this.state.col, this.state);
     if (!this.alive(tk)) return;
@@ -408,6 +488,12 @@ export class GameScene extends Phaser.Scene {
   openPause() {
     if (this.paused || this.over) return;
     this.paused = true;
+    // new artwork popup (falls back to the old drawn one when the picture is missing)
+    if (openPausePanel(this, {
+      levelText: `Level ${this.level.id} - ${this.level.name}`,
+      onClose: () => (this.paused = false),
+      onRestart: () => this.restart(false),
+    })) return;
     const d = UI.dialog(this, { title: 'PAUSED', w: 420, h: 560, onClose: () => (this.paused = false) });
     const c = d.c;
     c.add(UI.text(this, 0, -170, `Level ${this.level.id} - ${this.level.name}`, 24, { thick: 4 }).setColor('#1b2a52').setStroke('#ffffff', 0));
@@ -428,7 +514,10 @@ export class GameScene extends Phaser.Scene {
     const result = gm.completeLevel(this.level, stars, this.assists);
     gm.audio.sfx('win');
     Fx.confetti(this, 60);
-    await this.wait(1200);
+    await this.wait(500);
+    if (!this.alive(tk)) return;
+    // "GREAT JOB!" popup (coins won + NEXT button), then the Level Complete screen (if the picture is missing: short pause as before)
+    if (!(await showGreatJob(this, { coins: result.reward.total }))) await this.wait(700);
     if (!this.alive(tk)) return;
     UI.go(this, 'LevelComplete', { levelId: this.level.id, stars, result, assists: this.assists });
   }
@@ -455,7 +544,12 @@ export class GameScene extends Phaser.Scene {
     if (lb >= 0) {
       const cost = this.costOf(lb);
       const done = () => { d.close(true); this.over = false; };
-      if (gm.coins >= cost) {
+      if (lb === VIP_BAY && gm.inv.vip > 0) {
+        c.add(UI.button(this, 0, 62, 330, 62, `REVIVE - FREE VIP (${gm.inv.vip})`, {
+          color: 0xffb62e, icon: 'lock', size: 20,
+          onClick: () => { if (!gm.useItem('vip')) return; done(); this.applyUnlock(lb).then(() => this.afterMove()); },
+        }));
+      } else if (gm.coins >= cost) {
         c.add(UI.button(this, 0, 62, 330, 62, `REVIVE  ${cost} COINS`, {
           color: 0xffb62e, icon: 'lock', size: 22,
           onClick: () => { if (!this.pay(cost)) return; done(); this.applyUnlock(lb).then(() => this.afterMove()); },

@@ -2,7 +2,9 @@ import { SaveManager } from './SaveManager.js';
 import { AudioManager } from './AudioManager.js';
 import { LevelManager } from './LevelManager.js';
 import { solve, createState } from './PuzzleValidator.js';
-import { ACHIEVEMENTS } from '../data/achievements.js';
+
+// short buzz per sound effect name (milliseconds, or [buzz, pause, buzz...])
+const HAPTICS = { click: 10, park: 25, depart: 20, unlock: 35, coin: 8, star: 15, error: 60, win: [50, 50, 120], fail: [120, 60, 120] };
 
 /** Single shared hub: save data, audio, level info, coins. Scenes import the `gm` singleton. */
 class GameManager {
@@ -11,6 +13,21 @@ class GameManager {
     this.audio = new AudioManager(this.save);
     this.levels = LevelManager;
     this._listeners = new Set();
+    // Phone vibration: every game sound effect that matters also gives a short buzz (when Vibration is ON in Settings).
+    const sfx = this.audio.sfx.bind(this.audio);
+    this.audio.sfx = (name, ...args) => {
+      const pattern = HAPTICS[name];
+      if (pattern) this.vibrate(pattern);
+      return sfx(name, ...args);
+    };
+  }
+
+  get vibrationOn() { return !!this.save.settings.vibration; }
+  setVibration(on) { this.save.setSetting('vibration', on); }
+  /** Buzz the phone (number of ms or a pattern). Does nothing when Vibration is OFF or the device cannot vibrate. */
+  vibrate(pattern = 15) {
+    if (!this.vibrationOn) return;
+    try { if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(pattern); } catch (e) { /* ignore */ }
   }
 
   // ---- tiny event hook for coin changes (HUD counters subscribe)
@@ -36,6 +53,34 @@ class GameManager {
     return res;
   }
 
+  // ---- booster tokens (prizes of the Lucky Spin)
+  get inv() { return this.save.inv; }
+  addItem(kind, n = 1) { this.save.addItem(kind, n); this._emitInv(); }
+  useItem(kind) {
+    const ok = this.save.useItem(kind);
+    if (ok) this._emitInv();
+    return ok;
+  }
+  onInv(fn) {
+    this._invListeners = this._invListeners || new Set();
+    this._invListeners.add(fn);
+    return () => this._invListeners.delete(fn);
+  }
+  _emitInv() {
+    (this._invListeners || []).forEach((fn) => fn(this.save.inv));
+  }
+
+  // ---- lucky spin: 1 free spin per 10 cleared levels
+  get clearedLevels() { return Object.values(this.save.data.levels).filter((l) => l.stars > 0).length; }
+  get freeSpins() { return Math.max(0, Math.floor(this.clearedLevels / 10) - this.save.data.spin.freeUsed); }
+  levelsToNextSpin() { return 10 - (this.clearedLevels % 10); }
+  useFreeSpin() {
+    if (this.freeSpins <= 0) return false;
+    this.save.data.spin.freeUsed++;
+    this.save.save();
+    return true;
+  }
+
   get currentLevelId() { return this.save.current; }
 
   /** Dev-only sanity check so a bad hand-edited level is noticed immediately. */
@@ -52,25 +97,7 @@ class GameManager {
     const { firstClear, improved } = this.save.recordWin(level.id, stars, this.levels.count, colors, level.totalPassengers);
     const reward = this.levels.rewardFor(level, stars, { firstClear });
     this.addCoins(reward.total);
-    const achievements = this.checkAchievements();
-    return { reward, firstClear, improved, prevCoins, achievements };
-  }
-
-  /** Grants any newly reached achievements (coins included) and returns them. */
-  checkAchievements() {
-    const view = {
-      data: this.save.data,
-      wins: () => this.save.data.stats.wins,
-      cleared: () => Object.values(this.save.data.levels).filter((l) => l.stars > 0).length,
-      perfect: () => Object.values(this.save.data.levels).filter((l) => l.stars === 3).length,
-      totalStars: () => this.save.totalStars(),
-    };
-    const got = [];
-    ACHIEVEMENTS.forEach((a) => {
-      if (a.value(view) >= a.goal && this.save.grantAch(a.id, a.coins)) got.push(a);
-    });
-    if (got.length) this._emitCoins();
-    return got;
+    return { reward, firstClear, improved, prevCoins };
   }
 
   failLevel() {

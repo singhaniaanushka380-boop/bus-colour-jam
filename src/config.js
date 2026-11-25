@@ -6,7 +6,7 @@ export const GAME_H = 960;
 export const SAVE_KEY = 'bus-color-jam:save:v1'; // key stays the same: old saves are migrated in place (see SaveManager)
 export const SAVE_VERSION = 2;
 // Coin prices. If the player cannot afford one, the only way to get it is a rewarded ad.
-export const BOOST_COST = { vip: 80, extra: 100, pax: 100, colors: 100 };
+export const BOOST_COST = { vip: 800, extra: 100, pax: 800, colors: 800 };
 export const START_COINS = 100;
 export const DAILY_REWARDS = [50, 75, 100, 125, 150, 175, 200]; // day 1..7, then the cycle starts again at 50
 
