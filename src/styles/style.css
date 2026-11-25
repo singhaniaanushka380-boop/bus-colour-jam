@@ -51,26 +51,56 @@ html, body {
   position: fixed;
   inset: 0;
   z-index: 10;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 18px;
-  background: linear-gradient(180deg, var(--sky-top), var(--sky-bottom));
-  color: #fff;
-  font-weight: 900;
-  letter-spacing: 2px;
-  text-shadow: 0 3px 0 var(--navy), 0 0 12px rgba(27, 42, 82, 0.5);
-  transition: opacity 0.4s ease;
+  transition: opacity 0.9s ease;
 }
 #boot-splash.hide { opacity: 0; pointer-events: none; }
-#boot-splash .title { font-size: clamp(34px, 9vw, 64px); }
-#boot-splash .spinner {
-  width: 54px; height: 54px; border-radius: 50%;
-  border: 7px solid rgba(255, 255, 255, 0.45);
-  border-top-color: #ffd23f;
-  animation: spin 0.9s linear infinite;
+#boot-splash .slide {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.6s ease;
 }
+/* 1) RJ GAMES: deep purple neon, matches the edges of the logo artwork on wide screens */
+#boot-splash .slide.rj { background: radial-gradient(ellipse at 50% 45%, #2a0a66 0%, #0b0136 55%, #030120 100%); }
+/* 2) BUS COLOR JAM: sky above, green below, matching the artwork edges on wide screens */
+#boot-splash .slide.bcj { background: linear-gradient(180deg, #0062fd 0%, #9ce6fe 50%, #019902 100%); opacity: 0; }
+#boot-splash.stage2 .slide.bcj { opacity: 1; }
+#boot-splash .logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+/* loading bar on the BUS COLOR JAM screen */
+#boot-splash .loadbar {
+  position: absolute;
+  left: 50%;
+  bottom: max(5%, env(safe-area-inset-bottom, 0px) + 22px);
+  transform: translateX(-50%);
+  width: min(78vw, 420px);
+  height: 34px;
+  border-radius: 17px;
+  background: #12275f;
+  border: 4px solid #ffffff;
+  box-shadow: 0 5px 0 rgba(10, 20, 60, 0.55), 0 8px 18px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+#boot-splash .loadbar .fill {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0%;
+  background: linear-gradient(180deg, #ffe66b 0%, #ffb515 55%, #ff8a00 100%);
+  border-radius: 14px;
+}
+#boot-splash .loadbar .pct {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font: 900 15px/1 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  letter-spacing: 1.5px; color: #fff;
+  text-shadow: 0 2px 0 #12275f, 0 0 6px rgba(18, 39, 95, 0.9);
+}
+#boot-splash .slide.rj .logo { animation: splash-in 0.6s ease-out both; }
+@keyframes splash-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: scale(1); } }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 noscript {

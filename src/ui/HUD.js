@@ -1,5 +1,6 @@
 import { GAME_W, BOOST_COST } from '../config.js';
 import { UI } from './UIManager.js';
+import { gm } from '../systems/GameManager.js';
 
 /**
  * Premium in-game HUD: glossy pause button, level badge, coin counter, passenger progress bar and a
@@ -59,10 +60,11 @@ export class HUD {
       const tg = scene.add.graphics();
       tg.fillStyle(0x1b2a52).fillRoundedRect(-27, -11, 54, 22, 11);
       tg.lineStyle(2, 0xffffff, 0.8).strokeRoundedRect(-27, -11, 54, 22, 11);
-      c.add([tg, scene.add.image(-14, 0, 'coin').setDisplaySize(15, 15)]);
+      const coin = scene.add.image(-14, 0, 'coin').setDisplaySize(15, 15);
+      c.add([tg, coin]);
       const t = UI.text(scene, 8, 0, `${cost}`, 13, { thick: 3 });
       c.add(t);
-      return t;
+      return { t, coin, cost };
     };
     const small = (x, icon, color, fn, name, cost) => {
       const b = keep(UI.button(scene, x, 897, 48, 48, '', { color, icon, round: true, onClick: fn }).setDepth(depth));
@@ -73,13 +75,24 @@ export class HUD {
     const booster = (x, icon, color, fn, name, cost) => {
       const b = keep(UI.button(scene, x, 896, 96, 56, '', { color, icon, onClick: fn }).setDepth(depth));
       keep(UI.text(scene, x, 931, name, 10, { thick: 3 }).setDepth(depth + 1));
-      tag(x, 949, cost);
+      b.tag = tag(x, 949, cost);
       return b;
     };
     this.vip = booster(108, 'lock', 0xffb62e, handlers.onVip, 'VIP', BOOST_COST.vip);
     this.shufflePax = booster(226, 'passenger', 0x3ed16a, handlers.onShufflePax, 'ARRANGE', BOOST_COST.pax);
     this.shuffleCol = booster(344, 'levels', 0xa566ff, handlers.onShuffleColors, 'JUMBLE', BOOST_COST.colors);
     this.restart = small(470, 'restart', 0xff4d5e, handlers.onRestart, 'RESTART').b;
+    this.setInventory(gm.inv);
+  }
+
+  /** Shows "x2" instead of the coin price while the player owns free tokens of that booster. */
+  setInventory(inv) {
+    [['vip', this.vip], ['pax', this.shufflePax], ['colors', this.shuffleCol]].forEach(([k, b]) => {
+      const n = inv[k] || 0;
+      b.tag.coin.setVisible(n === 0);
+      b.tag.t.setText(n > 0 ? `FREE x${n}` : `${b.tag.cost}`);
+      b.tag.t.setX(n > 0 ? 0 : 8).setFontSize(n > 0 ? 11 : 13);
+    });
   }
 
   setProgress(boarded) {

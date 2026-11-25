@@ -1,7 +1,7 @@
-// Level format (v4 "Bus Rush: Cars, Vans & Buses").
+// Level format (v5 "Bus Rush": cars, minivans & coaches, 4 + 4 facing directions).
 //
-//   id, name, tip?, challenge?, w, h       parking grid size in cells (max 9 x 9), drawn as a diamond in 3D
-//   vehicles: ['r2E10', '?b3N45', ...]     colour code, length (2|3|4), facing (N/E/S/W), head x, head y
+//   id, name, tip?, challenge?, w, h       parking grid size in cells (max 12 x 12), drawn as a diamond in 3D
+//   vehicles: ['r2E10', '?b5A45', ...]     colour code, CAPACITY CLASS (1-7), facing, head x, head y
 //                                          a leading '?' makes it a MYSTERY vehicle (colour hidden while blocked)
 //   tunnels:  [[3, 7, 9], ...]             TUNNEL SPAWNERS: vehicle 3 is parked at the garage mouth, 7 drives out
 //                                          when 3 has left, then 9 when 7 has left. Members share length, facing and
@@ -9,7 +9,12 @@
 //   queue:    'rrbyg...'                   ONE winding queue of passengers, front first (colour per character)
 //   plan:     'a03...'                     one proven winning tap order (vehicle indices, base 36)
 //
-// Seats: length 2 = Compact Car (4), length 3 = Minivan (6), length 4 = Big Bus (10).
+// Capacity class -> seats (cells the vehicle covers):
+//   1 = Small car 4 (2)   2 = Small car 8 (2)   3 = Minivan 12 (3)   4 = Minivan 16 (3)
+//   5 = Coach 24 (4)      6 = Coach 32 (5)      7 = Coach 40 (6)
+// Facing: N E S W = 0/90/180/270 degrees, and the four 45-degree diagonals
+//   A = north-east, B = south-east, C = south-west, D = north-west   (a diagonal vehicle also needs the two
+//   corner cells next to every step of its road to be free).
 // For every colour: seats of its vehicles == passengers waiting.
 
 export const COLOR_BY_CODE = {
@@ -17,25 +22,46 @@ export const COLOR_BY_CODE = {
   o: 'orange', p: 'purple', a: 'grey', n: 'brown', s: 'sky',
 };
 export const CODE_BY_COLOR = Object.fromEntries(Object.entries(COLOR_BY_CODE).map(([c, n]) => [n, c]));
-export const DIRS = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0] };
-export const SEATS_BY_LENGTH = { 2: 4, 3: 8, 4: 16, 5: 24, 6: 40 };
-export const VEHICLE_NAMES = { 2: 'Compact Car', 3: 'Minivan', 4: 'Bus', 5: 'Coach', 6: 'Mega Bus' };
+export const DIRS = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0], A: [1, -1], B: [1, 1], C: [-1, 1], D: [-1, -1] };
+export const DIAGONALS = ['A', 'B', 'C', 'D'];
+export const SEATS_BY_CAP = { 1: 4, 2: 8, 3: 12, 4: 16, 5: 24, 6: 32, 7: 40 };
+export const CELLS_BY_CAP = { 1: 2, 2: 2, 3: 3, 4: 3, 5: 4, 6: 5, 7: 6 };
+export const VEHICLE_NAMES = { 4: 'Small Car', 8: 'Small Car', 12: 'Minivan', 16: 'Minivan', 24: 'Coach', 32: 'Coach', 40: 'Coach' };
 export const MAX_GRID = 12;
 export const MAX_VEHICLES = 30; // vehicles are tracked in a 31-bit mask
 export const BAYS = 4; // active parking bays; a 5th (VIP) bay can be unlocked
+
+/** Cells a vehicle at (x,y) moving by (dx,dy) must find empty for its next step. Diagonal steps also need the two corner cells. */
+export function stepCells(x, y, dx, dy) {
+  const nx = x + dx;
+  const ny = y + dy;
+  return dx !== 0 && dy !== 0 ? [[nx, ny], [nx, y], [x, ny]] : [[nx, ny]];
+}
+
+/** Corner cells beside the body of a diagonal vehicle (they must stay free so two vehicles never overlap visually). */
+export function bodyCorners(cells, dx, dy) {
+  const out = [];
+  if (dx === 0 || dy === 0) return out;
+  for (let t = 0; t + 1 < cells.length; t++) {
+    const [x, y] = cells[t];
+    out.push([x - dx, y], [x, y - dy]);
+  }
+  return out;
+}
 
 export function parseBus(str, i) {
   const mystery = str[0] === '?';
   const s = mystery ? str.slice(1) : str;
   const color = COLOR_BY_CODE[s[0]];
-  const len = Number(s[1]);
+  const cap = Number(s[1]);
+  const len = CELLS_BY_CAP[cap];
   const dir = s[2];
   const [dx, dy] = DIRS[dir];
   const x = parseInt(s[3], 36);
   const y = parseInt(s[4], 36);
   const cells = [];
   for (let t = 0; t < len; t++) cells.push([x - dx * t, y - dy * t]); // head first
-  return { i, color, len, dir, dx, dy, x, y, mystery, seats: SEATS_BY_LENGTH[len], cells, path: [], block: 0, after: -1, chain: -1 };
+  return { i, color, len, cap, dir, dx, dy, diag: dx !== 0 && dy !== 0, x, y, mystery, seats: SEATS_BY_CAP[cap], cells, path: [], block: 0, after: -1, chain: -1 };
 }
 
 /** Raw level -> ready-to-play level with precomputed blockers (bitmasks), tunnel chains and the queue. */
@@ -55,11 +81,14 @@ export function parseLevel(raw) {
     owners.get(k).push(b.i);
   }));
   for (const b of buses) {
-    let x = b.x + b.dx;
-    let y = b.y + b.dy;
-    while (inGrid(x, y)) {
-      b.path.push([x, y]);
-      for (const o of owners.get(`${x},${y}`) || []) if (o !== b.i) b.block |= 1 << o;
+    let x = b.x;
+    let y = b.y;
+    for (;;) {
+      const step = stepCells(x, y, b.dx, b.dy);
+      const live = step.filter(([cx, cy]) => inGrid(cx, cy));
+      if (!live.length) break;
+      for (const [cx, cy] of live) for (const o of owners.get(`${cx},${cy}`) || []) if (o !== b.i) b.block |= 1 << o;
+      if (inGrid(step[0][0], step[0][1])) b.path.push(step[0]);
       x += b.dx;
       y += b.dy;
     }
@@ -97,7 +126,7 @@ export function validateRaw(raw) {
   (raw.tunnels || []).forEach((ch) => ch.forEach((v) => inChain.add(v)));
   const parsed = [];
   raw.vehicles.forEach((s, i) => {
-    if (!/^\??[rybgkopasn][2-6][NESW][0-9a-z]{2}$/.test(s)) { p.push(`vehicle ${i} bad code "${s}"`); return; }
+    if (!/^\??[rybgkopasn][1-7][NESWABCD][0-9a-z]{2}$/.test(s)) { p.push(`vehicle ${i} bad code "${s}"`); return; }
     const b = parseBus(s, i);
     parsed[i] = b;
     seats[b.color] = (seats[b.color] || 0) + b.seats;
@@ -108,6 +137,14 @@ export function validateRaw(raw) {
       const k = `${x},${y}`;
       if (occupied.has(k)) p.push(`vehicle ${i} overlaps vehicle ${occupied.get(k)}`);
       occupied.set(k, i);
+    });
+  });
+  parsed.forEach((b) => {
+    if (!b || !b.diag) return;
+    if ((raw.tunnels || []).some((ch) => ch.includes(b.i))) p.push(`vehicle ${b.i}: tunnels need a straight (N/E/S/W) vehicle`);
+    bodyCorners(b.cells, b.dx, b.dy).forEach(([x, y]) => {
+      const o = occupied.get(`${x},${y}`);
+      if (o !== undefined && o !== b.i) p.push(`vehicle ${b.i} (diagonal) touches vehicle ${o} beside its body`);
     });
   });
   (raw.tunnels || []).forEach((ch, c) => {

@@ -1,9 +1,9 @@
 import Phaser from 'phaser';
 import { GAME_W, GAME_H, DAILY_REWARDS } from '../config.js';
 import { gm } from '../systems/GameManager.js';
-import { LevelManager } from '../systems/LevelManager.js';
 import { UI, Fx } from '../ui/UIManager.js';
-import { ACHIEVEMENTS } from '../data/achievements.js';
+import { openSpinPanel } from '../ui/SpinPanel.js';
+import { openSettingsPanel } from '../ui/SettingsPanel.js';
 
 // The menu artwork (public/assets/menu_bg.jpg) is 941 x 1672 px. Hit areas below are written in
 // IMAGE pixels, so you can tune them straight from an image editor; they are scaled to 540 x 960.
@@ -16,12 +16,13 @@ const KY = GAME_H / IMG_H;
 const HITBOXES = {
   settings:     [80, 78, 110, 110],
   play:         [470, 1082, 625, 180],
-  levels:       [471, 1255, 570, 120],
-  achievements: [130, 1435, 185, 175],
+  spin:         [130, 1435, 185, 175],
   daily:        [366, 1435, 185, 175],
   sound:        [594, 1435, 185, 175],
   about:        [818, 1435, 185, 175],
 };
+
+const rad = (d) => (d * Math.PI) / 180;
 
 export class MenuScene extends Phaser.Scene {
   constructor() {
@@ -37,14 +38,93 @@ export class MenuScene extends Phaser.Scene {
 
     this.buildCoinReadout();
 
-    const go = (scene, data) => () => UI.go(this, scene, data);
     this.hit('settings', () => this.openSettings(), 'round');
     this.hit('play', () => UI.go(this, 'Game', { levelId: gm.currentLevelId }), 'pill');
-    this.hit('levels', go('LevelSelect'), 'pill');
-    this.hit('achievements', () => this.openAchievements(), 'round');
+    this.hit('spin', () => this.openSpin(), 'round');
     this.hit('daily', () => this.openDaily(), 'round');
     this.hit('sound', () => this.toggleSound(), 'round');
     this.hit('about', () => this.openAbout(), 'round');
+
+    this.buildLevelLabel();
+    this.buildSpinTile();
+    this.buildCheckInLabel();
+    this.refreshBadges();
+  }
+
+  // ---- helpers: image pixels -> game pixels
+  px(x) { return x * KX; }
+  py(y) { return y * KY; }
+
+  /** The big green button shows the level the player is about to play ("LEVEL 7"). */
+  buildLevelLabel() {
+    const t = UI.text(this, this.px(538), this.py(1074), `LEVEL ${gm.currentLevelId}`, 34, { thick: 6, stroke: '#1d6a05' });
+    const maxW = this.px(285);
+    let size = 34;
+    while (t.width > maxW && size > 12) { size -= 2; t.setFontSize(size); }
+    this.levelTxt = t;
+    this.tweens.add({ targets: t, scale: 1.06, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  }
+
+  /** Lucky Spin button (artwork public/assets/menu_spin.png; the old painted Achievements button was removed from menu_bg.jpg). */
+  buildSpinTile() {
+    if (this.textures.exists('menu_spin')) {
+      const img = this.add.image(this.px(130), this.py(1436), 'menu_spin');
+      const w = this.px(204);
+      img.setDisplaySize(w, w * (img.height / img.width));
+      this.spinBtn = img;
+      this.tweens.add({ targets: img, scaleX: img.scaleX * 1.04, scaleY: img.scaleY * 1.04, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      return;
+    }
+    // fallback (artwork missing): simple painted tile
+    const g = this.add.graphics();
+    const cx = this.px(131.5);
+    const cy = this.py(1409);
+    const w = this.px(158);
+    const h = this.py(129);
+    g.fillStyle(0x1b2a6b, 1).fillRoundedRect(cx - w / 2, cy - h / 2, w, h, 24);
+    g.fillStyle(0x9b5cff, 1).fillRoundedRect(cx - w / 2 + 3, cy - h / 2 + 3, w - 6, h - 6, 21);
+    this.plate(this.px(130), this.py(1493), this.px(170), 'LUCKY SPIN', 17);
+  }
+
+  buildCheckInLabel() {
+    this.plate(this.px(366), this.py(1493), this.px(160), 'CHECK IN', 18);
+  }
+
+  /** Paints over the text on a painted label plate and writes `str` instead. */
+  plate(x, y, w, str, size) {
+    const g = this.add.graphics();
+    g.fillStyle(0x1f3763, 1).fillRoundedRect(x - w / 2, y - this.py(15), w, this.py(30), 6);
+    const t = UI.text(this, x, y, str, size, { thick: 4 });
+    const maxW = w - 6;
+    let sz = size;
+    while (t.width > maxW && sz > 8) { sz -= 1; t.setFontSize(sz); }
+    return t;
+  }
+
+  /** Red "!" bubble on the top-right corner of a button. */
+  makeBadge(x, y) {
+    const c = this.add.container(x, y).setDepth(20);
+    const g = this.add.graphics();
+    g.fillStyle(0xffffff, 1).fillCircle(0, 0, 15);
+    g.fillStyle(0xe5202f, 1).fillCircle(0, 0, 12.5);
+    c.add(g);
+    c.add(UI.text(this, 0, -1, '!', 20, { thick: 3 }));
+    this.tweens.add({ targets: c, scale: 1.18, duration: 520, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    return c;
+  }
+
+  /** Shows/hides the red "!" marks: Check In while today's gift is unclaimed, Lucky Spin while a free spin is waiting. */
+  refreshBadges() {
+    const showDaily = gm.save.dailyStatus().available;
+    if (showDaily && !this.dailyBadge) this.dailyBadge = this.makeBadge(this.px(427.5), this.py(1363));
+    if (!showDaily && this.dailyBadge) { this.dailyBadge.destroy(); this.dailyBadge = null; }
+    const showSpin = gm.freeSpins > 0;
+    if (showSpin && !this.spinBadge) this.spinBadge = this.makeBadge(this.px(208), this.py(1352));
+    if (!showSpin && this.spinBadge) { this.spinBadge.destroy(); this.spinBadge = null; }
+  }
+
+  openSpin() {
+    openSpinPanel(this, { onChange: () => this.refreshBadges() });
   }
 
   /** Invisible, clickable area over a button that is painted on the artwork. */
@@ -109,65 +189,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   openSettings() {
-    const d = UI.dialog(this, { title: 'SETTINGS', w: 440, h: 480 });
-    const c = d.c;
-    const row = (label, yy, icon, get, set, color) => {
-      c.add(this.darkText(-150, yy, label, 30, { ox: 0 }));
-      c.add(UI.toggleButton(this, 140, yy, 70, icon, get, set, color));
-    };
-    row('Sound', -110, 'sound', () => gm.audio.soundOn, (v) => gm.audio.setSound(v), 0x3d8bff);
-    row('Music', -20, 'music', () => gm.audio.musicOn, (v) => gm.audio.setMusic(v), 0xff7ac8);
-
-    let armed = false;
-    const reset = UI.button(this, 0, 90, 320, 64, 'RESET PROGRESS', { color: 0xff4d5e, size: 26 });
-    reset.on('pointerup', () => {
-      if (!armed) {
-        armed = true;
-        reset.label.setText('TAP AGAIN TO CONFIRM');
-        reset.label.setFontSize(20);
-        this.time.delayedCall(2500, () => {
-          armed = false;
-          if (reset.label && reset.scene) {
-            reset.label.setText('RESET PROGRESS');
-            reset.label.setFontSize(26);
-          }
-        });
-      } else {
-        gm.save.reset();
-        gm.audio.setSound(true);
-        gm.audio.setMusic(true);
-        d.close(true);
-        UI.go(this, 'Menu');
-      }
-    });
-    c.add(reset);
-    c.add(this.darkText(0, 175, 'BUS COLOR JAM  v2.0 - 3D', 20, { color: '#6b7699' }));
-  }
-
-  openAchievements() {
-    const d = UI.dialog(this, { title: 'ACHIEVEMENTS', w: 460, h: 600 });
-    const c = d.c;
-    const sv = gm.save;
-    const view = {
-      data: sv.data,
-      wins: () => sv.data.stats.wins,
-      cleared: () => Object.values(sv.data.levels).filter((l) => l.stars > 0).length,
-      perfect: () => Object.values(sv.data.levels).filter((l) => l.stars === 3).length,
-      totalStars: () => sv.totalStars(),
-    };
-    ACHIEVEMENTS.forEach((a, i) => {
-      const y = -190 + i * 76;
-      const done = sv.hasAch(a.id);
-      const val = Math.min(a.goal, a.value(view));
-      const g = this.add.graphics();
-      g.fillStyle(done ? 0xd9f7e2 : i % 2 ? 0xf1f4fa : 0xe3ebfa).fillRoundedRect(-200, y - 32, 400, 64, 14);
-      g.fillStyle(done ? 0x3ed16a : 0xb9c3d9).fillCircle(-168, y, 18);
-      c.add(g);
-      c.add(this.darkText(-168, y, done ? '✓' : `${i + 1}`, 22, { ox: 0.5, color: '#ffffff' }));
-      c.add(this.darkText(-136, y - 11, a.name, 21, { ox: 0 }));
-      c.add(this.darkText(-136, y + 13, `${a.desc}  (${val}/${a.goal})`, 14, { ox: 0, color: '#5b6788' }));
-      c.add(this.darkText(188, y, `+${a.coins}`, 20, { ox: 1, color: '#d98a00' }));
-    });
+    openSettingsPanel(this);
   }
 
   openAbout() {
@@ -183,7 +205,7 @@ export class MenuScene extends Phaser.Scene {
 
   openDaily() {
     const status = gm.save.dailyStatus();
-    const d = UI.dialog(this, { title: 'DAILY REWARD', w: 460, h: 540 });
+    const d = UI.dialog(this, { title: 'CHECK IN', w: 460, h: 540 });
     const c = d.c;
     c.add(this.darkText(0, -190, status.available ? 'Your gift is ready!' : 'Come back tomorrow!', 28));
 
@@ -218,6 +240,7 @@ export class MenuScene extends Phaser.Scene {
         if (!res) return;
         claim.setDisabled(true);
         claim.label.setText('CLAIMED');
+        this.refreshBadges(); // the red "!" goes away as soon as check-in is done
         this.coins.setValue(prev);
         const per = Math.ceil(res.reward / 8);
         let shown = prev;

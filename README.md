@@ -3,7 +3,8 @@
 Tap toy vehicles out of a jammed parking grid, park them in 4 bays (+1 VIP bay) and let the waiting passengers board.
 
 ## Rules
-- **Vehicles**: Compact Car (4 seats), Minivan (6), Big Bus (10). The roof arrow shows the driving direction.
+- **Vehicles**: small cars (4 or 8 seats), minivans (12 or 16) and coaches (24, 32 or 40). The white roof arrow shows the driving direction: 0/90/180/270 degrees or one of the four 45-degree diagonals. A vehicle drives out along its arrow only if every cell ahead (and, for diagonals, the two corner cells beside each step) is free.
+- **Fast flow**: tapping a vehicle sends it to a bay immediately (no waiting for earlier vehicles to finish boarding); a vehicle leaves the instant its last seat is taken.
 - **Tap a vehicle**: if the way ahead is clear it drives out and parks in a free bay; otherwise it bumps and shakes.
 - **Boarding**: only the FRONT passenger of the winding queue boards, and only a parked vehicle of the same colour with a free seat. Chain reaction: the next passenger tries at once.
 - **A full vehicle** closes its doors, drives away and frees the bay.

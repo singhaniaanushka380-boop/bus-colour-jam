@@ -1,4 +1,4 @@
-// Procedural 3D models: three glossy toy vehicles (Compact Car 4 seats, Minivan 6, Big Bus 10) with windows, wheels,
+// Procedural 3D models: three glossy toy vehicles (small cars 4/8 seats, minivans 12/16, coaches 24/32/40) with windows, wheels,
 // headlights and ONE white direction arrow on the roof, a tunnel garage, and the geometry for the instanced
 // stickman passengers (pill body, head, swinging arms and legs).
 import * as THREE from 'three';

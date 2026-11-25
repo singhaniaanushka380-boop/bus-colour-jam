@@ -1,4 +1,5 @@
-// Level generator ("Bus Rush": cars 4 seats, minivans 6, big buses 10; mystery vehicles; tunnel spawners).
+// Level generator ("Bus Rush": 4/8-seat cars, 12/16-seat minivans, 24/32/40-seat coaches; 8 facing directions
+// (N/E/S/W + four 45-degree diagonals); mystery vehicles; tunnel spawners).
 // 1. Vehicles are placed one by one so each new one has a clear road ahead (=> the grid can always be emptied).
 //    Some vehicles whose tail touches the grid edge get a TUNNEL: extra vehicles queued in a garage behind them.
 // 2. A random valid tap order T is chosen. The passenger queue is written in a "fill order" F that is T with
@@ -11,14 +12,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseLevel, validateRaw, SEATS_BY_LENGTH } from '../src/data/levelFormat.js';
+import { parseLevel, validateRaw, CELLS_BY_CAP, DIAGONALS, stepCells, bodyCorners } from '../src/data/levelFormat.js';
 import { randomWinRate, jamCount, replay } from '../src/systems/PuzzleValidator.js';
 
 const OUT = path.join(path.dirname(fileURLToPath(import.meta.url)), '../src/data/levels.js');
 const TOTAL = 200;
 const INTRO = ['r', 'b', 'y', 'g', 'k', 'o', 's', 'p', 'a', 'n']; // order in which colours appear
 const DIRS = ['N', 'E', 'S', 'W'];
-const D = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0] };
+const D = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0], A: [1, -1], B: [1, 1], C: [-1, 1], D: [-1, -1] };
 
 function mulberry(seed) {
   let a = seed >>> 0;
@@ -83,7 +84,8 @@ function spec(id) {
   const window = id <= 3 ? 1 : id <= 10 ? 2 : id <= 40 ? 3 : 4;
   const target = (0.7 * Math.pow(1 - p, 1.4) + 0.05) * (challenge ? 0.7 : 1);
   const lenMix = p < 0.12 ? [0.6, 1, 1, 1] : p < 0.4 ? [0.4, 0.75, 1, 1] : p < 0.7 ? [0.32, 0.62, 0.9, 0.97] : [0.28, 0.56, 0.86, 0.95];
-  return { A, w, h, tpl, lenMix, tunnels, mysteryFrac, nCol, window, challenge, target };
+  const diagFrac = id < 8 ? 0 : Math.min(0.38, 0.12 + p * 0.3);
+  return { A, w, h, tpl, lenMix, diagFrac, tunnels, mysteryFrac, nCol, window, challenge, target };
 }
 
 function chooseColours(s, count, r) {
@@ -94,25 +96,43 @@ function chooseColours(s, count, r) {
   return [newest, ...pool.slice(0, idx - 1)];
 }
 
+/** Probability of each capacity class (1..7 = 4,8,12,16,24,32,40 seats), derived from the old length mix. */
+function capWeights(q) {
+  const P2 = q[0]; const P3 = q[1] - q[0]; const P4 = q[2] - q[1]; const P5 = q[3] - q[2]; const P6 = 1 - q[3];
+  return [0.6 * P2, 0.4 * P2 + 0.5 * P3, 0.5 * P3 + 0.4 * P4, 0.6 * P4, 0.6 * P5, 0.4 * P5 + 0.5 * P6, 0.5 * P6];
+}
+function pickCap(q, r) {
+  const w = capWeights(q);
+  let x = r() * w.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < w.length; i++) { x -= w[i]; if (x < 0) return i + 1; }
+  return 7;
+}
+
 function placeVehicles(s, r) {
   const inMask = maskFor(s.tpl, s.w);
   const occ = new Set();
+  const resv = new Set(); // cells beside the body of diagonal vehicles
   const out = [];
   for (let i = 0; i < s.A; i++) {
-    const roll = r();
-    const q = s.lenMix; // cumulative thresholds for lengths 2..6
-    const len = roll < q[0] ? 2 : roll < q[1] ? 3 : roll < q[2] ? 4 : roll < q[3] ? 5 : 6;
+    const cap = pickCap(s.lenMix, r);
+    const len = CELLS_BY_CAP[cap];
     let placed = null;
     let bestScore = -1;
     let found = 0;
     for (let t = 0; t < 900 && found < 10; t++) {
       const x = Math.floor(r() * s.w);
       const y = Math.floor(r() * s.h);
-      let dir = pick(DIRS, r);
-      if (r() < 0.6) { // mostly point at the nearest edge: neat, readable patterns
-        const dd = [['W', x], ['E', s.w - 1 - x], ['N', y], ['S', s.h - 1 - y]];
-        dd.sort((p, q) => p[1] - q[1]);
-        dir = dd[r() < 0.75 ? 0 : 1][0];
+      let dir;
+      if (r() < s.diagFrac) {
+        dir = pick(DIAGONALS, r);
+        if (r() < 0.6) dir = (x < s.w / 2 ? (y < s.h / 2 ? 'D' : 'C') : (y < s.h / 2 ? 'A' : 'B'));
+      } else {
+        dir = pick(['N', 'E', 'S', 'W'], r);
+        if (r() < 0.6) { // mostly point at the nearest edge: neat, readable patterns
+          const dd = [['W', x], ['E', s.w - 1 - x], ['N', y], ['S', s.h - 1 - y]];
+          dd.sort((p, q) => p[1] - q[1]);
+          dir = dd[r() < 0.75 ? 0 : 1][0];
+        }
       }
       const [dx, dy] = D[dir];
       const cells = [];
@@ -120,14 +140,20 @@ function placeVehicles(s, r) {
       for (let k = 0; k < len && ok; k++) {
         const cx = x - dx * k;
         const cy = y - dy * k;
-        if (cx < 0 || cy < 0 || cx >= s.w || cy >= s.h || !inMask(cx, cy) || occ.has(`${cx},${cy}`)) ok = false;
+        if (cx < 0 || cy < 0 || cx >= s.w || cy >= s.h || !inMask(cx, cy) || occ.has(`${cx},${cy}`) || resv.has(`${cx},${cy}`)) ok = false;
         cells.push(`${cx},${cy}`);
       }
       if (!ok) continue;
-      let px = x + dx;
-      let py = y + dy;
-      while (px >= 0 && py >= 0 && px < s.w && py < s.h) {
-        if (occ.has(`${px},${py}`)) { ok = false; break; }
+      const own = new Set(cells);
+      const corners = bodyCorners(cells.map((c) => c.split(',').map(Number)), dx, dy);
+      if (corners.some(([cx, cy]) => occ.has(`${cx},${cy}`))) continue;
+      // clear road ahead (diagonal steps also need their two corner cells)
+      let px = x;
+      let py = y;
+      for (;;) {
+        const step = stepCells(px, py, dx, dy).filter(([cx, cy]) => cx >= 0 && cy >= 0 && cx < s.w && cy < s.h);
+        if (!step.length) break;
+        if (step.some(([cx, cy]) => occ.has(`${cx},${cy}`) && !own.has(`${cx},${cy}`))) { ok = false; break; }
         px += dx; py += dy;
       }
       if (ok) {
@@ -139,11 +165,12 @@ function placeVehicles(s, r) {
         }
         const score = (i === 0 ? 0 : nb) + r() * 1.5;
         found++;
-        if (score > bestScore) { bestScore = score; placed = { len, dir, x, y, cells }; }
+        if (score > bestScore) { bestScore = score; placed = { cap, len, dir, x, y, cells, corners }; }
       }
     }
     if (!placed) return null;
     placed.cells.forEach((c) => occ.add(c));
+    placed.corners.forEach(([cx, cy]) => resv.add(`${cx},${cy}`));
     out.push(placed);
   }
   return out;
@@ -157,6 +184,7 @@ function build(id, s, r) {
   const chains = [];
   const eligible = shuffle(lay.map((v, i) => i).filter((i) => {
     const v = lay[i]; const [dx, dy] = D[v.dir];
+    if (dx !== 0 && dy !== 0) return false; // garages need a straight vehicle
     const gx = v.x - dx * v.len; const gy = v.y - dy * v.len;
     return gx < 0 || gy < 0 || gx >= s.w || gy >= s.h;
   }), r);
@@ -173,7 +201,7 @@ function build(id, s, r) {
   while (colour.length < total) colour.push(pick(cols, r));
   shuffle(colour, r);
   const mystery = veh.map(() => r() < s.mysteryFrac);
-  const vehicles = veh.map((v, i) => `${mystery[i] ? '?' : ''}${colour[i]}${v.len}${v.dir}${v.x.toString(36)}${v.y.toString(36)}`);
+  const vehicles = veh.map((v, i) => `${mystery[i] ? '?' : ''}${colour[i]}${v.cap}${v.dir}${v.x.toString(36)}${v.y.toString(36)}`);
   const raw0 = { id, name: 'x', w: s.w, h: s.h, vehicles, tunnels: chains, queue: 'r' };
   const tmp = parseLevel(raw0);
   // random valid tap order
@@ -199,7 +227,7 @@ const TIPS = {
   2: 'Vehicles cannot drive through other vehicles. Free the way first.',
   3: 'Only the FRONT passenger of the queue can board. Send the colour they are waiting for.',
   4: 'There are only 4 bays! A vehicle keeps its bay until every seat is taken.',
-  5: 'Cars have 4 seats, minivans 6 and big buses 10. Boosters can help when you are stuck.',
+  5: 'Cars have 4-8 seats, minivans 12-16 and coaches 24-40. Boosters can help when you are stuck.',
 };
 
 export function generateLevel(id, onProgress) {
@@ -249,6 +277,8 @@ const fmt = (raw) => {
 };
 
 function writeLevels(levels) {
+  const firstDiag = levels.find((l) => l.vehicles.some((v) => /[ABCD]/.test(v[2] === undefined ? '' : (v[0] === '?' ? v[3] : v[2]))));
+  if (firstDiag && !firstDiag.tip) firstDiag.tip = 'Some vehicles face diagonally (45 degrees). They drive straight along their roof arrow, so keep both corners clear.';
   const body = levels.map(fmt).join('\n');
   fs.writeFileSync(OUT, `// 200 levels (see levelFormat.js for the format).\n// Generated by tools/generate-levels.mjs - every level is proven solvable by replaying its stored \`plan\`\n// (npm run verify). Feel free to hand-edit levels, then run \`npm run verify\`.\nexport const LEVELS = [\n${body}\n];\n`);
   console.log(`wrote ${levels.length} levels -> ${OUT}`);

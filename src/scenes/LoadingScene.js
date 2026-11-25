@@ -33,6 +33,15 @@ export class LoadingScene extends Phaser.Scene {
     this.load.once('complete', () => (this.loaded = true));
     // Menu artwork: public/assets/menu_bg.jpg  (relative path works on Vercel and sub-paths)
     this.load.image('menu_bg', 'assets/menu_bg.jpg');
+    // Settings popup artwork: public/assets/settings_panel.png
+    this.load.image('settings_panel', 'assets/settings_panel.png');
+    // Lucky Spin popup artwork: panel, the rotating wheel disc and the pointer tip that stays above it
+    this.load.image('spin_panel', 'assets/spin_panel.png');
+    this.load.image('spin_wheel', 'assets/spin_wheel.png');
+    this.load.image('spin_ptr', 'assets/spin_ptr.png');
+    this.load.spritesheet('great_job', 'assets/great_job.png', { frameWidth: 512, frameHeight: 341 }); // level-complete popup animation
+    this.load.image('pause_panel', 'assets/pause_panel.png'); // pause popup
+    this.load.image('menu_spin', 'assets/menu_spin.png'); // main-menu Lucky Spin button
   }
 
   create() {

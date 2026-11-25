@@ -8,10 +8,11 @@ const defaults = () => ({
   unlocked: 1,
   current: 1,
   levels: {}, // { [id]: { stars, plays } }
-  settings: { sound: true, music: true },
+  settings: { sound: true, music: true, vibration: true },
+  inv: { vip: 0, pax: 0, colors: 0 }, // free boosters won in the lucky spin
+  spin: { freeUsed: 0 }, // free lucky spins already used (1 is earned per 10 cleared levels)
   daily: { last: null, streak: 0 },
   stats: { wins: 0, fails: 0, boarded: 0 },
-  ach: {}, // { [achievementId]: true }
   colors: [], // colour names seen in cleared levels (Rainbow achievement)
   migrated: null, // { from, gift } when an older save was upgraded
 });
@@ -52,8 +53,8 @@ function merge(base, extra) {
     if (!(k in extra)) continue;
     const b = base[k];
     const e = extra[k];
-    if (b && typeof b === 'object' && !Array.isArray(b) && k !== 'levels' && k !== 'ach') base[k] = merge(b, e);
-    else if (b === null || typeof e === typeof b || k === 'levels' || k === 'ach') base[k] = e;
+    if (b && typeof b === 'object' && !Array.isArray(b) && k !== 'levels') base[k] = merge(b, e);
+    else if (b === null || typeof e === typeof b || k === 'levels') base[k] = e;
   }
   return base;
 }
@@ -127,12 +128,16 @@ export class SaveManager {
     return Object.values(this.data.levels).reduce((n, l) => n + (l.stars || 0), 0);
   }
 
-  // ---- achievements
-  hasAch(id) { return !!this.data.ach[id]; }
-  grantAch(id, coins) {
-    if (this.data.ach[id]) return false;
-    this.data.ach[id] = true;
-    this.data.coins += coins;
+  // ---- booster tokens (lucky spin prizes)
+  get inv() { return this.data.inv; }
+  addItem(kind, n = 1) {
+    if (!(kind in this.data.inv)) return;
+    this.data.inv[kind] = Math.max(0, Math.round(this.data.inv[kind] + n));
+    this.save();
+  }
+  useItem(kind) {
+    if (!(this.data.inv[kind] > 0)) return false;
+    this.data.inv[kind]--;
     this.save();
     return true;
   }

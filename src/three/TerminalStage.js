@@ -742,11 +742,10 @@ export class TerminalStage {
     const b = this.level.buses[i];
     const pose = this.busLotPose(i);
     const g = this.buses[i].obj.group.position;
-    let t;
-    if (b.dx > 0) t = w / 2 + 1.3 - pose.lx;
-    else if (b.dx < 0) t = pose.lx + w / 2 + 1.3;
-    else if (b.dy > 0) t = h / 2 + 1.3 - pose.lz;
-    else t = pose.lz + h / 2 + 1.3;
+    // distance along the roof arrow until the vehicle has left the lot (works for the 45-degree diagonals too)
+    const tx = b.dx > 0 ? w / 2 + 1.3 - pose.lx : b.dx < 0 ? pose.lx + w / 2 + 1.3 : Infinity;
+    const tz = b.dy > 0 ? h / 2 + 1.3 - pose.lz : b.dy < 0 ? pose.lz + h / 2 + 1.3 : Infinity;
+    const t = Math.min(tx, tz);
     const E = this.lotToWorld(pose.lx + b.dx * t, pose.lz + b.dy * t);
     const bx = bayX[bay];
     const pts = [v3(g.x, 0, g.z)];
@@ -817,8 +816,7 @@ export class TerminalStage {
     this._topUp(lane, true);
     const e = this.buses[busIdx];
     const bx = this.L.bayX[bay];
-    const squash = () => { this._squash(e.obj.group); return true; };
-    if (!rec) return Promise.resolve(squash());
+    if (!rec) { this._squash(e.obj.group); return Promise.resolve(true); }
     const from = this.slotXZ(lane, rec.d);
     const door = v3(bx + (Math.random() - 0.5) * 0.3, PAX_Y, NOSE_Z - 0.3);
     // run out through the exit gap, then straight to the vehicle's door
@@ -846,7 +844,8 @@ export class TerminalStage {
       },
     }).then((ok) => {
       this._release(rec.slot);
-      return ok ? squash() : false;
+      if (ok) this._squash(e.obj.group); // little bounce runs on its own: the vehicle may leave the same instant
+      return !!ok;
     });
   }
 
